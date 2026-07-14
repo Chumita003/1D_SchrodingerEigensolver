@@ -140,8 +140,15 @@ def Schrodinger_solver(
     # Construct the Hamiltonian matrix
     H = T + V
 
-    # Computing the eigenvalues and eigenvectors of the Hamiltonian
-    eigvals, eigvecs = eigsh(H, k = num_eigvals, which = 'SA')
+    # Computing the eigenvalues and eigenvectors of the Hamiltonian.
+    # Shift-invert: target eigenvalues near sigma instead of running plain Lanczos on
+    # the full spectrum (which is slow here because T's spectral range is huge). sigma
+    # must sit safely below every possible eigenvalue: since H = T + V with T >= 0
+    # (the discretized kinetic energy is positive semi-definite), E_0 >= min(V) always,
+    # so any sigma < min(V) is guaranteed safe, and "closest to sigma" becomes exactly
+    # "the k smallest".
+    sigma = float(V_values.min()) - 1.0
+    eigvals, eigvecs = eigsh(H, k = num_eigvals, sigma = sigma, which = 'LM')
 
     # Sorting the eigenvalues and corresponding eigenvectors
     idx = np.argsort(eigvals)
