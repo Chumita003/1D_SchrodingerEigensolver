@@ -73,4 +73,4 @@ python validate_1d.py
 
 ## Scope
 
-This is 1D only, using a low-to-mid-order finite-difference scheme and standard sparse diagonalization (no shift-invert, no acceleration for large domains). It's not meant to be a production package or to handle huge grids, it's the tool I built to understand 1D spectra and to practice the bridge between a derivation on paper and working code. The 2D version of this same approach lives in `Eigensolver_2Dimensions.py`.
+This is 1D only, using a low-to-mid-order finite-difference scheme and sparse diagonalization with shift-invert: `eigsh` targets eigenvalues near a safe lower bound on the spectrum (`min(V) - 1`, guaranteed below every possible eigenvalue since $E_0\geq\min(V)$) instead of running plain Lanczos on the whole thing, converging faster and more robustly to the lowest few states. It's not meant to be a production package or to handle huge grids, it's the tool I built to understand 1D spectra and to practice the bridge between a derivation on paper and working code. The 2D version of this same approach lives in `Eigensolver_2Dimensions.py`.
