@@ -31,31 +31,60 @@ For the infinite square well ($L=10$, $\hbar=m=1$, $E_n = n^2\pi^2\hbar^2/2mL^2$
 ```
 Infinite square well (N=2000)             Harmonic oscillator (N=2000)
  n     numeric     analytic   rel.err      n     numeric     analytic   rel.err
- 1   0.04935566  0.04934802  1.548e-04     0   0.50000000  0.50000000  8.623e-11
- 2   0.19742264  0.19739209  1.548e-04     1   1.50000000  1.50000000  1.995e-10
- 3   0.44420095  0.44413220  1.548e-04     2   2.50000000  2.50000000  4.267e-10
- 4   0.78969057  0.78956835  1.548e-04     3   3.50000000  3.50000000  7.696e-10
- 5   1.23389152  1.23370055  1.548e-04     4   4.49999999  4.50000000  1.225e-09
- 6   1.77680378  1.77652879  1.548e-04     5   5.49999999  5.50000000  1.796e-09
+ 1   0.04934802  0.04934802  4.366e-11     0   0.50000000  0.50000000  8.786e-11
+ 2   0.19739209  0.19739209  1.055e-11     1   1.50000000  1.50000000  2.003e-10
+ 3   0.44413220  0.44413220  3.830e-13     2   2.50000000  2.50000000  4.280e-10
+ 4   0.78956835  0.78956835  1.442e-11     3   3.50000000  3.50000000  7.699e-10
+ 5   1.23370055  1.23370055  4.053e-11     4   4.49999999  4.50000000  1.226e-09
+ 6   1.77652879  1.77652879  8.657e-11     5   5.49999999  5.50000000  1.796e-09
 ```
 
-The harmonic oscillator gives a relative error of 9 to 10 orders of magnitude, basically machine precision. The infinite square well plateaus at ~$1.5\times10^{-4}$ across every level, a flat error that doesn't grow with $n$. That flatness has a concrete explanation, it isn't noise: it comes from a deliberate design decision I made when building the stencil, and it's worth walking through because it's the most interesting part of the project numerically.
+The harmonic oscillator gives a relative error of 9 to 10 orders of magnitude, basically machine precision. The infinite square well used to plateau at ~$1.5\times10^{-4}$ across every level, a flat error that didn't grow with $n$. That flatness had a concrete explanation, and chasing it down is the most interesting part of the project numerically, so the section below keeps the whole story: what the defect was, why my first instinct about how to fix it was wrong, and what the actual fix turned out to be.
 
-## The boundary accuracy limit, and why I left it that way
+## The boundary rows: the defect, the wrong fix, and the right one
 
-The 5-point stencil for the second derivative is fourth order in the interior of the grid. But in the two rows adjacent to each Dirichlet boundary, the full stencil needs a point one step past the edge of the domain, a point that doesn't exist. I derived the correct one-sided formulas for those rows by hand, they're on page 2 of `Eigensolver_1Dimensional.pdf`. The problem is that if I use them there and keep the central stencil everywhere else, the Hamiltonian matrix stops being symmetric: the coefficient a one-sided row assigns to its neighbor doesn't match the coefficient that neighbor, using the central stencil, assigns back. That breaks $H=H^\dagger$, and with it the guarantee of real eigenvalues and orthogonal eigenvectors that is literally the point of solving a Hermitian eigenvalue problem.
+The 5-point stencil for the second derivative is fourth order in the interior of the grid. But in the two rows adjacent to each Dirichlet boundary, the full stencil needs a point one step past the edge of the domain, a point that doesn't exist. Concretely, labeling the interior points $x_1\dots x_N$ with boundaries at $x_0$ and $x_{N+1}$, the row for $i=1$ is
 
-So I kept the uniform central stencil across the whole grid, exactly as I justified in my original notes. The cost is that those two rows per boundary drop from $O(dx^4)$ to $O(dx^2)$ local accuracy, which caps the global convergence at $O(dx)$, not $O(dx^4)$, for any state with appreciable amplitude or slope at the boundary. I confirmed this by sweeping $N$ for the infinite square well:
+$$\frac{-\psi_{-1} + 16\psi_0 - 30\psi_1 + 16\psi_2 - \psi_3}{12\,dx^2}$$
+
+and while $\psi_0 = 0$ is legitimate (that's the Dirichlet condition), $\psi_{-1}$ sits at $x_0 - dx$, outside the domain. Treating it as zero is not a boundary condition, it's just dropping a term.
+
+My first instinct was to derive one-sided fourth-order formulas for those two rows by hand, they're on page 2 of `Eigensolver_1Dimensional.pdf`. That fix doesn't work, and the reason is structural: if I use them there and keep the central stencil everywhere else, the Hamiltonian matrix stops being symmetric, because the coefficient a one-sided row assigns to its neighbor doesn't match the coefficient that neighbor, using the central stencil, assigns back. That breaks $H=H^\dagger$, and with it the guarantee of real eigenvalues and orthogonal eigenvectors that is literally the point of solving a Hermitian eigenvalue problem. So for a while I kept the uniform central stencil and documented the cost: those two rows per boundary drop from $O(dx^4)$ to $O(dx^2)$ local accuracy, which caps global convergence at $O(dx)$ for any state with appreciable amplitude or slope at the boundary. The measured error fell exactly as $1/N$, confirming it.
+
+The right fix doesn't come from numerical analysis at all, it comes from the differential equation. Since $\psi'' = \frac{2m}{\hbar^2}(V-E)\psi$ and $\psi(x_0)=0$, it follows immediately that $\psi''(x_0)=0$ too. The low-order even derivatives vanish at a Dirichlet boundary, so $\psi$ is odd about $x_0$ and
+
+$$\psi_{-1} = -\psi_1.$$
+
+Substituting that into the row above, the $-\psi_{-1}$ term becomes $+\psi_1$, which simply adds $+1/(12\,dx^2)$ to the **diagonal** entry of that row, i.e. $-30 \to -29$ in units of $1/(12\,dx^2)$. Same argument at $i=N$. Because it only touches the diagonal, the matrix stays exactly symmetric, which is precisely what the one-sided formulas couldn't manage. Two lines of code:
+
+```python
+main[0]  += 1.0 / (12.0 * dx**2)
+main[-1] += 1.0 / (12.0 * dx**2)
+```
+
+The effect on the infinite square well is dramatic: the flat $1.5\times10^{-4}$ plateau drops to $\sim10^{-11}$, and the convergence order goes from $p=1.00$ to $p\approx4.0$:
 
 ![Infinite square well convergence](figures/convergence_isw.png)
 
-The measured error falls exactly as $1/N$, not $1/N^4$, tracking the $O(1/N)$ reference line at every point. The harmonic oscillator doesn't show this problem because its wavefunction has already decayed to essentially zero well before reaching the domain boundary, so the defect in those two rows has almost nothing to act on. A proper fix that preserves exact symmetry exists (summation-by-parts boundary operators with a non-uniform quadrature), but that's a different can of worms and I left it out of this project on purpose.
+```
+N=   20   rel. error=8.285e-06
+N=   30   rel. error=1.529e-06   local slope p=4.17
+N=   45   rel. error=2.886e-07   local slope p=4.11
+N=   65   rel. error=6.450e-08   local slope p=4.08
+N=  100   rel. error=1.127e-08   local slope p=4.05
+N=  150   rel. error=2.196e-09   local slope p=4.03
+N=  220   rel. error=4.724e-10   local slope p=4.01
+```
+
+The sweep stops at $N=220$ on purpose. Past that the error flattens out around $10^{-10}$ to $10^{-12}$, where the shift-invert eigensolve, not the discretization, is the accuracy floor, so pushing to $N=3200$ would be measuring ARPACK rather than the stencil. The harmonic oscillator is unchanged either way, because its wavefunction has already decayed to essentially zero well before reaching the domain boundary, so $\psi_{-1}\approx0$ regardless.
+
+One honest caveat: the odd extension is exact only when $V'(x_0)=0$. Differentiating $\psi''=\frac{2m}{\hbar^2}(V-E)\psi$ twice and evaluating at the boundary leaves $\psi^{(4)}(x_0) = \frac{4m}{\hbar^2}V'(x_0)\psi'(x_0)$, the first even derivative that isn't forced to vanish. With $V'(x_0)\neq0$ a local $O(dx^2)$ error survives in those two rows. In practice this doesn't bite: if $V$ has appreciable slope at the domain edge, the domain is too small to begin with.
 
 ## Two more precision notes
 
-The boundary defect above isn't the only place this solver loses accuracy, it's just the one with the most interesting story. Two other potentials have their own, unrelated limitations, and I only found both by actually checking numeric eigenvalues against something I could compute independently.
+The boundary rows weren't the only place this solver loses accuracy, and fixing them didn't touch the other two. Both of these are potential-sampling problems, not stencil problems, and I only found them by actually checking numeric eigenvalues against something I could compute independently.
 
-The finite square well ($L=10$, $V_0=50$, centered) has a semi-analytic spectrum, solving the even/odd transcendental equations $k\tan(kL/2)=\kappa$ and $k\cot(kL/2)=-\kappa$ for a root-finder gives it. Against that, the solver sits at a relative error of about $8\times10^{-4}$, roughly flat across levels, and it halves when I double $N$ (2500 to 5000: $8.0\times10^{-4}\to3.9\times10^{-4}$). This isn't the boundary defect, the wavefunction has decayed to nothing long before it reaches $x_{\min}/x_{\max}$ here. It's the sharp jump in $V(x)$ at the well walls: a fixed-order finite-difference stencil doesn't resolve a discontinuity as cleanly as a smooth potential, and needs a finer grid right around $x=\pm L/2$ to do better.
+The finite square well ($L=10$, $V_0=50$, centered) has a semi-analytic spectrum, solving the even/odd transcendental equations $k\tan(kL/2)=\kappa$ and $k\cot(kL/2)=-\kappa$ for a root-finder gives it. Against that, the solver sits at a relative error of about $8\times10^{-4}$, roughly flat across levels, and it halves when I double $N$ (2500 to 5000: $8.0\times10^{-4}\to3.9\times10^{-4}$), i.e. first order. This is *not* the boundary defect, and it's worth being explicit about that because the error magnitude is in the same ballpark the boundary defect used to produce: the odd-extension fix leaves these numbers completely unchanged, digit for digit. Two independent reasons it can't be the boundary: the wavefunction has decayed to nothing long before it reaches $x_{\min}/x_{\max}$ here, and the error doesn't move when the boundary rows change. What it actually is: the sharp jump in $V(x)$ at the well walls, sampled pointwise onto the grid by `np.where`. A fixed-order finite-difference stencil doesn't resolve a discontinuity as cleanly as a smooth potential, and the effective location of the wall wobbles by up to $dx$ depending on where the grid points happen to fall. The proper fix is cell-averaged sampling of $V$ (integrate $V$ over each grid cell instead of evaluating it at the center), which would restore second order here. Not implemented yet.
 
 The discrete delta well is worse, and for a completely different reason. The exact bound state is $E=-m\alpha^2/2\hbar^2$, for $\alpha=5$ that's $-12.5$. The solver gives $-12.146$ at $N=2000$ (2.8% off) and $-12.321$ at $N=4000$ (1.4% off), still shrinking with $N$ but starting from a much worse place than anything else in this project. The reason is that `V_DeltaDiscrete` represents an actual Dirac delta as a single grid spike, $V_{i_0}=-\alpha/dx$, and that's a genuinely coarse stand-in for a delta function. It only converges to the real thing as $dx\to0$, and it needs a much finer grid than every other potential here to get comparable accuracy. If I ever use this potential for more than illustration, this is the first thing to fix.
 

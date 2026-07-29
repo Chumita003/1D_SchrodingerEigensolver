@@ -25,9 +25,23 @@ from validate_1d import (
 
 
 def test_infinite_square_well_matches_analytic():
-    # Measured ~1.5e-4 (boundary-stencil limitation, see README). Generous margin.
+    # Measured ~1e-11 at N=2000, limited by the shift-invert eigensolve rather than by the
+    # discretization. Before the odd-extension boundary closure this sat at ~1.5e-4, so the
+    # threshold here is deliberately tight: it is the regression guard for that closure.
     _, _, _, err = validate_infinite_square_well(N=2000)
-    assert np.all(err < 2e-4)
+    assert np.all(err < 1e-8)
+
+
+def test_infinite_square_well_converges_at_fourth_order():
+    # Direct check that the boundary closure restores the design order of the stencil.
+    # Measured local slopes: 4.17, 4.11, 4.08, 4.05, 4.03, 4.01. Without the closure these
+    # would all sit at ~1.0. Bounds are loose enough to absorb the usual preasymptotic
+    # wobble but far away from the first-order failure mode.
+    from validate_1d import convergence_study_isw
+    Ns, errs = convergence_study_isw()
+    slopes = -np.log(errs[1:] / errs[:-1]) / np.log(Ns[1:] / Ns[:-1])
+    assert np.all(slopes > 3.5)
+    assert np.all(slopes < 4.6)
 
 
 def test_harmonic_oscillator_matches_analytic():
@@ -37,7 +51,9 @@ def test_harmonic_oscillator_matches_analytic():
 
 
 def test_finite_square_well_matches_semianalytic():
-    # Measured ~8e-4 (grid resolution near the V(x) discontinuity, see README).
+    # Measured ~8e-4 (grid resolution near the V(x) discontinuity, see README). Note this
+    # one is NOT improved by the boundary closure: the error comes from sampling the step
+    # in V pointwise onto the grid, not from the stencil, so it stays near first order.
     _, _, _, err = validate_finite_square_well(N=2500)
     assert np.all(err < 2e-3)
 
@@ -59,7 +75,7 @@ def test_nth_eigenfunction_has_n_nodes():
     # Checked here on a potential with no closed-form spectrum (quartic single well),
     # so this is purely a structural sanity check, not an accuracy check.
     x, eigvals, eigvecs = Schrodinger_solver(
-        V_pot=partial(V_SingleWell, a=1.0, V0=2.0),
+        V_pot=partial(V_SingleWell, V0=2.0),
         x_min=-6.0, x_max=6.0, N=1500, num_eigvals=6,
     )
     for n in range(6):

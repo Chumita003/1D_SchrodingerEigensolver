@@ -11,18 +11,28 @@ semi-analytic spectrum, and reports the relative error per level:
   - Discrete delta well:    E = -m*alpha^2 / (2*hbar^2), the one exact bound state.
 
 The finite well and delta well each carry their own accuracy caveat, unrelated to the
-boundary-stencil limitation below - see the README section "Two more precision notes".
+boundary closure described below - see the README section "Two more precision notes".
 
 It also reproduces the convergence-order plot referenced in the README: for the
 infinite square well, the ground-state relative error is measured as a function of the
-number of grid points N and compared against an O(1/N) reference line. This is the
-direct numerical evidence for the boundary-stencil limitation documented in
-d2dx2_matrix's docstring in Eigensolver_1Dimension.py: the two rows adjacent to each
-Dirichlet boundary use a truncated (not one-sided-corrected) 5-point stencil to keep the
-Hamiltonian exactly Hermitian, which locally reduces accuracy from O(dx^4) to O(dx^2) at
-those two rows and shows up as O(dx) global convergence for any state with non-negligible
-amplitude/slope at the boundary. The harmonic oscillator is essentially unaffected
-because its eigenfunctions have decayed to ~0 well before the domain edge.
+number of grid points N and compared against an O(1/N^4) reference line. This is the
+direct numerical evidence for the boundary closure documented in d2dx2_matrix's docstring
+in Eigensolver_1Dimension.py: the two rows adjacent to each Dirichlet boundary close the
+5-point stencil with the odd extension psi_{-1} = -psi_1, which is a diagonal-only
+correction (so H stays exactly Hermitian) and restores the design order of the stencil.
+
+Historical note, kept because the README references it: before that closure the two
+boundary rows simply dropped the out-of-domain term, which locally degraded accuracy to
+O(dx^2) and showed up as O(dx) *global* convergence for any state with non-negligible
+amplitude/slope at the boundary. The infinite square well sat at ~1e-3 relative error and
+p = 1.00; it now sits at ~1e-11 with p ~ 4.0. The harmonic oscillator was, and still is,
+unaffected either way because its eigenfunctions decay to ~0 well before the domain edge.
+
+What is still NOT fixed by the boundary closure, and is visible in the tables below:
+  - the finite square well stays at ~8e-4 with roughly first-order convergence, because
+    the jump in V is sampled pointwise onto the grid. That is a potential-sampling error,
+    not a stencil error.
+  - the discrete delta well stays at ~3e-2 for the reason described in validate_delta_well.
 
 Run: python validate_1d.py
 """
@@ -151,7 +161,17 @@ def print_table(name, ns, numeric, analytic, rel_err):
         print(f"{n:>3} {num:>14.8f} {an:>14.8f} {err:>12.3e}")
 
 
-def convergence_study_isw(L=10.0, Ns=(200, 400, 800, 1600, 3200), hbar=1.0, m=1.0):
+def convergence_study_isw(L=10.0, Ns=(20, 30, 45, 65, 100, 150, 220), hbar=1.0, m=1.0):
+    '''
+    Ground state of the infinite square well vs grid size.
+
+    The N values are deliberately small. With the odd-extension boundary closure in place
+    the error reaches ~5e-10 by N = 220 and then flattens out around 1e-10 to 1e-12, where
+    the shift-invert eigensolve - not the discretization - is the accuracy floor. Pushing
+    to N = 3200 therefore measures ARPACK, not the stencil. In the range used here the
+    measured local slope is 4.17, 4.11, 4.08, 4.05, 4.03, 4.01, converging to the expected
+    p = 4.
+    '''
     errs = []
     analytic_gs = (np.pi ** 2 * hbar ** 2) / (2 * m * L ** 2)
     for N in Ns:
@@ -176,13 +196,15 @@ if __name__ == "__main__":
     print(f"\nDiscrete delta well (alpha=5): numeric={num:.6f}  analytic={an:.6f}  rel_err={err:.3e}")
 
     Ns, errs = convergence_study_isw()
+    slopes = -np.diff(np.log(errs)) / np.diff(np.log(Ns))
     print("\nInfinite square well, ground-state convergence vs N:")
-    for N, e in zip(Ns, errs):
-        print(f"N={N:>5}   rel. error={e:.3e}")
+    for i, (N, e) in enumerate(zip(Ns, errs)):
+        slope = f"   local slope p={slopes[i-1]:.2f}" if i > 0 else ""
+        print(f"N={N:>5}   rel. error={e:.3e}{slope}")
 
     fig, ax = plt.subplots(figsize=(5, 4))
     ax.loglog(Ns, errs, "o-", label="ground state, measured")
-    ax.loglog(Ns, errs[0] * Ns[0] / Ns, "--", color="gray", label=r"$O(1/N)$ reference")
+    ax.loglog(Ns, errs[0] * (Ns[0] / Ns) ** 4, "--", color="gray", label=r"$O(1/N^4)$ reference")
     ax.set_xlabel("N (grid points)")
     ax.set_ylabel("relative error")
     ax.set_title("Infinite square well: convergence order")
