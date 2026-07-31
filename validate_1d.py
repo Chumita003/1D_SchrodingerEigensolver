@@ -46,6 +46,7 @@ from Eigensolver_1Dimension import (
     V_HarmonicOscillator,
     V_InfiniteSquareWell,
     V_FiniteSquareWell,
+    V_FiniteSquareWell_CellAveraged,
     V_DeltaDiscrete,
 )
 
@@ -138,6 +139,62 @@ def validate_finite_square_well(L=10.0, V0=50.0, N=2500, num_eigvals=None, hbar=
     return np.arange(num_eigvals), eigvals, analytic, rel_err
 
 
+def validate_finite_square_well_cellaveraged(L=10.0, V0=50.0, N=2500, num_eigvals=None,
+                                             hbar=1.0, m=1.0):
+    '''
+    Same finite well as validate_finite_square_well, but sampling V by cell average
+    instead of pointwise. Everything else is identical, so the difference between the two
+    isolates the potential-sampling error from every other error in the solver.
+    '''
+    analytic = _finite_well_analytic_levels(L, V0, m=m, hbar=hbar)
+    if num_eigvals is None:
+        num_eigvals = len(analytic)
+    x, eigvals, eigvecs = Schrodinger_solver(
+        V_pot=partial(V_FiniteSquareWell_CellAveraged, L=L, V0=V0, well_centered=True),
+        x_min=-10.0, x_max=10.0, N=N, hbar=hbar, m=m, num_eigvals=num_eigvals,
+    )
+    analytic = analytic[:num_eigvals]
+    rel_err = np.abs(eigvals - analytic) / analytic
+    return np.arange(num_eigvals), eigvals, analytic, rel_err
+
+
+def convergence_study_finite_well(L=4.0, V0=40.0, Ns=(200, 400, 800, 1600, 3200),
+                                  hbar=1.0, m=1.0):
+    '''
+    Side-by-side convergence of the two sampling schemes on the finite square well.
+
+    This is the direct evidence that the residual finite-well error is a potential-
+    sampling problem and not a stencil problem: the boundary closure leaves the pointwise
+    numbers untouched, while changing only how V is sampled lifts the observed order from
+    p ~ 1 to p ~ 2. Measured on the ground state:
+
+        N       pointwise    p        cell-averaged  p
+        200     1.398e-02             2.592e-03
+        400     5.869e-03    1.25     4.939e-04      2.39
+        800     2.650e-03    1.15     1.051e-04      2.23
+        1600    1.254e-03    1.08     2.408e-05      2.13
+        3200    6.094e-04    1.04     5.754e-06      2.07
+
+    Second order is the ceiling, not a shortcoming of the averaging: V jumps at the wall
+    and psi is nonzero there, so psi'' jumps and psi is only C^1. A fourth-order stencil
+    cannot recover fourth order across a point where the solution lacks the derivatives
+    the Taylor expansion assumes.
+
+    Returns (Ns, err_pointwise, err_cellaveraged) for the ground state.
+    '''
+    exact = _finite_well_analytic_levels(L, V0, m=m, hbar=hbar)[0]
+    err_point, err_cell = [], []
+    for N in Ns:
+        for V_fun, bucket in ((V_FiniteSquareWell, err_point),
+                              (V_FiniteSquareWell_CellAveraged, err_cell)):
+            _, eigvals, _ = Schrodinger_solver(
+                V_pot=partial(V_fun, L=L, V0=V0, well_centered=True),
+                x_min=-8.0, x_max=8.0, N=N, hbar=hbar, m=m, num_eigvals=1,
+            )
+            bucket.append(abs(eigvals[0] - exact) / exact)
+    return np.array(Ns), np.array(err_point), np.array(err_cell)
+
+
 def validate_delta_well(alpha=5.0, N=2000, hbar=1.0, m=1.0):
     '''
     Exact single bound state of the continuum delta well: E = -m*alpha^2 / (2*hbar^2).
@@ -190,7 +247,22 @@ if __name__ == "__main__":
     print_table("Harmonic oscillator (omega=m=hbar=1)", ns, num, an, err)
 
     ns, num, an, err = validate_finite_square_well()
-    print_table("Finite square well (L=10, V0=50, centered)", ns, num, an, err)
+    print_table("Finite square well, pointwise V (L=10, V0=50, centered)", ns, num, an, err)
+
+    ns, num, an, err = validate_finite_square_well_cellaveraged()
+    print_table("Finite square well, cell-averaged V (same well)", ns, num, an, err)
+
+    Ns_fw, e_point, e_cell = convergence_study_finite_well()
+    print("\nFinite square well (L=4, V0=40), ground state, sampling comparison:")
+    print(f"{'N':>6} {'pointwise':>12} {'p':>6} {'cell-avg':>12} {'p':>6}")
+    for i, N in enumerate(Ns_fw):
+        if i == 0:
+            print(f"{N:>6} {e_point[i]:>12.3e} {'':>6} {e_cell[i]:>12.3e} {'':>6}")
+        else:
+            r = np.log(Ns_fw[i] / Ns_fw[i - 1])
+            pp = np.log(e_point[i - 1] / e_point[i]) / r
+            pc = np.log(e_cell[i - 1] / e_cell[i]) / r
+            print(f"{N:>6} {e_point[i]:>12.3e} {pp:>6.2f} {e_cell[i]:>12.3e} {pc:>6.2f}")
 
     num, an, err = validate_delta_well()
     print(f"\nDiscrete delta well (alpha=5): numeric={num:.6f}  analytic={an:.6f}  rel_err={err:.3e}")

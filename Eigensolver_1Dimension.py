@@ -54,8 +54,10 @@ def d2dx2_matrix(N, dx):
     anyway.
 
     Separately, and unrelated to the boundary: potentials with a jump discontinuity in the
-    interior (e.g. V_FiniteSquareWell) are still limited to ~O(dx) by pointwise sampling of
-    the step onto the grid, not by this stencil. That one is not fixed here.
+    interior are limited to ~O(dx) if V is sampled pointwise, which is a property of the
+    sampling and not of this stencil. V_FiniteSquareWell_CellAveraged removes that term
+    and reaches O(dx^2); second order is then the ceiling, since psi is only C^1 at the
+    jump and no sampling scheme can supply derivatives the solution does not have.
     '''
 
     '''
@@ -218,10 +220,78 @@ def V_InfiniteSquareWell(x):
     return np.zeros_like(x, dtype = float)
 
 def V_FiniteSquareWell(x, L = 10.0, V0 = 10.0, well_centered = False):
+    '''
+    Finite square well, sampled pointwise: V = 0 inside, V0 outside.
+
+    Accuracy note: because V jumps, evaluating it at the grid points puts the effective
+    wall wherever the nearest grid point happens to fall, up to dx away from the true
+    position. That caps convergence near first order regardless of the stencil - see
+    V_FiniteSquareWell_CellAveraged for the fix and the README for the measurement.
+    '''
     if well_centered:
         return np.where(np.abs(x) <= 0.5 * L, 0.0, V0)
     else:
         return np.where((x >= 0.0) & (x <= L), 0.0, V0)
+
+def V_FiniteSquareWell_CellAveraged(x, L = 10.0, V0 = 10.0, well_centered = False):
+    '''
+    Like V_DeltaDiscrete, this potential is not smooth and so is put on the grid by cell
+    average rather than by evaluating it at the grid points:
+
+        V_i = (1/dx) * integral over [x_i - dx/2, x_i + dx/2] of V(x') dx'
+
+    For a step the integral is exact and elementary: every cell is either fully inside (0)
+    or fully outside (V0) except the one straddling a wall, which gets V0 times the
+    fraction of itself lying outside. That single fractional value is what encodes the
+    sub-grid position of the wall, which pointwise sampling throws away.
+
+    The contrast with the delta is worth keeping in mind. There the cell average is
+    forced, since a delta cannot be evaluated pointwise at all. Here pointwise evaluation
+    returns a perfectly finite, plausible-looking number, so nothing signals that anything
+    is wrong - which is precisely why this error stayed hidden until it was measured
+    against the semi-analytic spectrum.
+
+    Why it matters: with pointwise sampling the effective wall snaps to the nearest grid
+    point, so the well's width is wrong by up to dx and, since dE/dL is not zero, the
+    energies inherit an O(dx) error. Cell averaging makes the encoded width *exact* - the
+    measured total measure where V < V0 matches L to 1e-14 at every N, against an O(dx)
+    error for pointwise sampling that also jitters non-monotonically with N depending on
+    where the grid happens to fall. The ground state of the L=4, V0=40 well goes from
+    1.40e-2 to 2.59e-3 at N=200, and from 6.09e-4 to 5.75e-6 at N=3200, with the observed
+    order rising from p = 1.04 to p = 2.07.
+
+    Second order, not fourth, is the ceiling, and the residual is NOT a shortcoming of the
+    averaging. Since V jumps and psi is nonzero at the wall, psi'' jumps too, so psi is C^1
+    but not C^2 there, and the stencil rows spanning that point expand in a Taylor series
+    that assumes four continuous derivatives when only one exists. A symmetric stencil
+    across a C^1 point gives second order regardless of how V is sampled.
+
+    That attribution is measured, not assumed. Choosing N so the wall falls exactly on a
+    cell boundary (N = 8m+5 on the domain [-8, 8] with L=4) makes the step representation
+    exact, with no cell straddling it. If the residual came from the averaging inside that
+    cell it would collapse; instead it stays at p = 2.00 and is slightly *larger*
+    (1.76e-5 against 5.75e-6 at N ~ 3200). So what survives is the stencil crossing the
+    kink, which no sampling scheme can remove.
+
+    Note this reads dx off the grid, the same pattern V_DeltaDiscrete uses, so it must be
+    called with the full grid array rather than a single point.
+    '''
+    x = np.asarray(x, dtype = float)
+    if x.size < 2:
+        raise ValueError("V_FiniteSquareWell_CellAveraged needs the grid array to infer dx.")
+    dx = x[1] - x[0]
+
+    if well_centered:
+        left, right = -0.5 * L, 0.5 * L
+    else:
+        left, right = 0.0, float(L)
+
+    # Overlap of each cell [x_i - dx/2, x_i + dx/2] with the well interval [left, right].
+    lo = np.maximum(x - 0.5 * dx, left)
+    hi = np.minimum(x + 0.5 * dx, right)
+    fraction_inside = np.maximum(0.0, hi - lo) / dx
+
+    return V0 * (1.0 - fraction_inside)
 
 def V_LinearPotential(x, F = 1.0):
     # Linear potential: V(x) = F * x
@@ -238,8 +308,28 @@ def V_SingleWell(x, V0 = 5.0):
 
 def V_DeltaDiscrete(x, alpha = 8.0, x0 = 0.0):
     """
-    Attractive delta: V(x) = -alpha * delta(x - x0), alpha>0
-    Discrete implementation on grid: V_i = -alpha/dx at the grid point nearest x0, else 0
+    Attractive delta well, V(x) = -alpha * delta(x - x0) with alpha > 0.
+
+    Like V_FiniteSquareWell_CellAveraged, this potential is not smooth and so is put on
+    the grid by cell average rather than by evaluating it at the grid points:
+
+        V_i = (1/dx) * integral over [x_i - dx/2, x_i + dx/2] of V(x') dx'
+
+    For a delta the integral picks out whichever cell contains x0 and gives -alpha/dx
+    there, zero everywhere else. That is the implementation below: the cell containing x0
+    is the one whose center is nearest to it, hence the argmin.
+
+    Here the cell average is not a refinement, it is the only option. A delta cannot be
+    evaluated pointwise at all, so there is no alternative scheme to compare against. The
+    finite square well is the opposite case: evaluating it pointwise returns a perfectly
+    finite, plausible-looking number, which is exactly why its sampling error stayed
+    hidden until it was measured.
+
+    Accuracy caveat, unrelated to the sampling: representing a delta as a single spike of
+    height alpha/dx is a coarse stand-in for the continuum object no matter how the cell
+    integral is done. It converges to the exact bound state E = -m*alpha^2/(2*hbar^2) only
+    as dx -> 0, and needs a much finer grid than every other potential here. See the
+    README.
     """
     dx = x[1] - x[0] if x.size > 1 else 1.0
     Varr = np.zeros_like(x, dtype = float)
@@ -393,12 +483,28 @@ def plot_energy_levels(eigvals, n_states = None, ax = None, title = "Energy leve
  )
 
  --------------------------- 4) Finite Square Well --------------------------
+ # Two sampling schemes for the same physical well. V jumps at the walls, so how the
+ # step is put on the grid matters: pointwise snaps each wall to the nearest grid
+ # point (error O(dx), and erratic in N), while the cell average keeps the wall's
+ # sub-grid position (error O(dx^2)). Prefer the cell-averaged one for anything
+ # quantitative; the pointwise one is kept so the two can be compared directly.
+
+ # 4a) pointwise sampling
  x, eigvals, eigvecs = Schrodinger_solver(
      V_pot = partial(V_FiniteSquareWell, L = 10.0, V0 = 50.0, well_centered = True),
      x_min=-10.0, x_max=10.0,
      N = 2500,
      num_eigvals = 10
  )
+
+ # 4b) cell-averaged sampling (recommended)
+ x, eigvals, eigvecs = Schrodinger_solver(
+     V_pot = partial(V_FiniteSquareWell_CellAveraged, L = 10.0, V0 = 50.0, well_centered = True),
+     x_min=-10.0, x_max=10.0,
+     N = 2500,
+     num_eigvals = 10
+ )
+ # Same call, ~30x smaller error. See convergence_study_finite_well in validate_1d.py.
 
  ----------------------------- 5) Linear Potential --------------------------
  x, eigvals, eigvecs = Schrodinger_solver(
@@ -418,7 +524,8 @@ def plot_energy_levels(eigvals, n_states = None, ax = None, title = "Energy leve
  )
 
  ----------------------------- 7) Quartic Single Well -----------------------
- # V(x) = V0 * (x^2 - a^2)^2  (one/two wells depending on parameters)
+ # V(x) = V0 * x^4, a single minimum at the origin.
+ # For the double-well quartic V0*(x^2 - a^2)^2 see recipe 9.
  x, eigvals, eigvecs = Schrodinger_solver(
      V_pot = partial(V_SingleWell, V0 = 2.0),
      x_min = -6.0, x_max = 6.0,
@@ -427,13 +534,19 @@ def plot_energy_levels(eigvals, n_states = None, ax = None, title = "Energy leve
  )
 
  ------------------------------ 8) Discrete Delta Well ----------------------
- # V(x) = -alpha*delta(x-x0)  implemented as V[i0] = -alpha/dx at nearest gridpoint
+ # V(x) = -alpha*delta(x-x0). Like the finite well in recipe 4b this potential is not
+ # smooth, so it is put on the grid by cell average: the cell integral of a delta is
+ # -alpha/dx in whichever cell contains x0 and zero elsewhere. The difference is that
+ # here the cell average is forced - a delta has no pointwise value to sample.
  x, eigvals, eigvecs = Schrodinger_solver(
      V_pot = partial(V_DeltaDiscrete, alpha = 5.0, x0 = 0.0),
      x_min = -20.0, x_max = 20.0,
      N = 6000,
      num_eigvals = 6
  )
+ # Converges to E = -m*alpha^2/(2*hbar^2), but slowly: a single spike of height
+ # alpha/dx is a coarse stand-in for a delta and needs a much finer grid than
+ # everything else here. See the README.
 
  ------------------------------- 9) Quartic Double Well ---------------------
  # V(x) = V0 * (x^2 - a^2)^2  (classic symmetric double well for a>0, V0>0)

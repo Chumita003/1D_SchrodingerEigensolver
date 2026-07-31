@@ -20,6 +20,8 @@ from validate_1d import (
     validate_infinite_square_well,
     validate_harmonic_oscillator,
     validate_finite_square_well,
+    validate_finite_square_well_cellaveraged,
+    convergence_study_finite_well,
     validate_delta_well,
 )
 
@@ -56,6 +58,31 @@ def test_finite_square_well_matches_semianalytic():
     # in V pointwise onto the grid, not from the stencil, so it stays near first order.
     _, _, _, err = validate_finite_square_well(N=2500)
     assert np.all(err < 2e-3)
+
+
+def test_cell_averaged_finite_well_beats_pointwise():
+    # Same well, same solver, only the sampling of V changes. Cell averaging keeps the
+    # sub-grid position of the wall instead of snapping it to the nearest grid point,
+    # which is worth roughly a factor of 30 at this resolution.
+    _, _, _, err_point = validate_finite_square_well(N=2500)
+    _, _, _, err_cell = validate_finite_square_well_cellaveraged(N=2500)
+    assert np.all(err_cell < err_point)
+    assert np.all(err_cell < 1e-4)
+
+
+def test_cell_averaged_finite_well_converges_at_second_order():
+    # The point of the whole exercise: pointwise sampling caps the finite well near p = 1,
+    # cell averaging lifts it to p = 2. Measured slopes are 1.25/1.15/1.08/1.04 and
+    # 2.39/2.23/2.13/2.07 respectively, both drifting toward their asymptote from above.
+    # Second order is the ceiling because psi is only C^1 at the wall, so no amount of
+    # better sampling recovers the stencil's fourth order there.
+    Ns, e_point, e_cell = convergence_study_finite_well()
+    r = np.log(Ns[1:] / Ns[:-1])
+    p_point = np.log(e_point[:-1] / e_point[1:]) / r
+    p_cell = np.log(e_cell[:-1] / e_cell[1:]) / r
+    assert np.all(p_point < 1.4)
+    assert np.all(p_cell > 1.9)
+    assert np.all(p_cell < 2.6)
 
 
 def test_delta_well_matches_analytic():
