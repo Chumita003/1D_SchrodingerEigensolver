@@ -61,7 +61,7 @@ Infinite square well (N=2000)             Harmonic oscillator (N=2000)
  6   1.77652879  1.77652879  8.657e-11     5   5.49999999  5.50000000  1.796e-09
 ```
 
-The harmonic oscillator gives a relative error of 9 to 10 orders of magnitude, basically machine precision. The infinite square well used to plateau at ~$1.5\times10^{-4}$ across every level, a flat error that didn't grow with $n$. That flatness had a concrete explanation, and chasing it down is the most interesting part of the project numerically, so the section below keeps the whole story: what the defect was, why my first instinct about how to fix it was wrong, and what the actual fix turned out to be.
+The harmonic oscillator gives a relative error of 9 to 10 orders of magnitude. That's not machine precision, which for float64 sits around $10^{-16}$; it's the stencil's own truncation error, and it keeps falling as $dx^4$. Doubling $N$ divides it by 16, which is what the sweep does. The infinite square well used to plateau at ~$1.5\times10^{-4}$ across every level, a flat error that didn't grow with $n$. That flatness had a concrete explanation, and chasing it down is the most interesting part of the project numerically, so the section below keeps the whole story: what the defect was, why my first instinct about how to fix it was wrong, and what the actual fix turned out to be.
 
 ## The boundary rows: the defect, the wrong fix, and the right one
 
