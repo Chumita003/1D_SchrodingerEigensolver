@@ -61,7 +61,7 @@ Infinite square well (N=2000)             Harmonic oscillator (N=2000)
  6   1.77652879  1.77652879  8.657e-11     5   5.49999999  5.50000000  1.796e-09
 ```
 
-The harmonic oscillator gives a relative error of 9 to 10 orders of magnitude. That's not machine precision, which for float64 sits around $10^{-16}$; it's the stencil's own truncation error, and it keeps falling as $dx^4$. Doubling $N$ divides it by 16, which is what the sweep does. The infinite square well used to plateau at ~$1.5\times10^{-4}$ across every level, a flat error that didn't grow with $n$. That flatness had a concrete explanation, and chasing it down is the most interesting part of the project numerically, so the section below keeps the whole story: what the defect was, why my first instinct about how to fix it was wrong, and what the actual fix turned out to be.
+The harmonic oscillator gives a relative error of 9 to 10 orders of magnitude. That's not machine precision, which for float64 sits around $10^{-16}$; it's the stencil's own truncation error, and it keeps falling as $dx^4$: run `validate_harmonic_oscillator` at $N$ and again at $2N$ and the error drops by a factor of 16. The infinite square well used to plateau at ~$1.5\times10^{-4}$ across every level, a flat error that didn't grow with $n$. That flatness had a concrete explanation, and chasing it down is the most interesting part of the project numerically, so the section below keeps the whole story: what the defect was, why my first instinct about how to fix it was wrong, and what the actual fix turned out to be.
 
 ## The boundary rows: the defect, the wrong fix, and the right one
 
@@ -112,7 +112,7 @@ What it actually is: the sharp jump in $V(x)$ at the well walls, sampled pointwi
 
 $$V_i = \frac{1}{dx}\int_{x_i - dx/2}^{x_i + dx/2} V(x')\,dx'$$
 
-which for a step is exact and elementary: the only cell that changes is the one straddling a wall, and it gets $V_0$ times the fraction of itself lying outside the well. That single fractional number carries the sub-grid position of the wall, which is precisely what pointwise sampling throws away. It's implemented as `V_FiniteSquareWell_CellAveraged` and measured side by side against the pointwise version in `convergence_study_finite_well`:
+which for a step is exact and elementary: the only cell that changes is the one straddling a wall, and it gets $V_0$ times the fraction of itself lying outside the well. That single fractional number carries the sub-grid position of the wall, which is precisely what pointwise sampling throws away. It's implemented as `V_FiniteSquareWell_CellAveraged` and measured side by side against the pointwise version in `convergence_study_finite_well`, which switches to a narrower and shallower well ($L=4$, $V_0=40$) so the sweep stays cheap:
 
 ```
 N       pointwise    p        cell-averaged  p
