@@ -1,6 +1,26 @@
 # Eigensolver 1D
 
 [![tests](https://github.com/Chumita003/1D_SchrodingerEigensolver/actions/workflows/tests.yml/badge.svg)](https://github.com/Chumita003/1D_SchrodingerEigensolver/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**A finite-difference eigensolver for the 1D time-independent Schrodinger equation, built from scratch and validated against every analytic spectrum it can be compared to.** Space is discretized on a uniform grid, the kinetic operator is a 4th-order 5-point stencil, the potential is a diagonal matrix, and the resulting sparse Hamiltonian is diagonalized with shift-invert `eigsh`. Nine potentials, 36 regression tests, CI on Python 3.10 and 3.12.
+
+The interesting part is not the method, which is standard. It is that building it carefully surfaced three *distinct* sources of error that look identical from the outside — all of them show up as a relative error around $10^{-3}$ to $10^{-4}$ that refuses to shrink — and separating them is what the project is actually about.
+
+**Three results:**
+
+**1. Fourth-order convergence, once the boundary is handled correctly.** The 5-point stencil needs a point outside the domain at each Dirichlet wall. Treating it as zero is not a boundary condition, it is a dropped term, and it capped the whole solver at $O(dx)$. Closing the stencil with the odd extension $\psi_{-1}=-\psi_1$ — which follows from the Schrodinger equation itself, not from numerical analysis — restores the design order:
+
+$$1.5\times10^{-4} \;\longrightarrow\; 4\times10^{-11}, \qquad p = 1.00 \;\longrightarrow\; p = 4.01$$
+
+![Infinite square well convergence](figures/convergence_isw.png)
+
+**2. Discontinuous potentials need cell-averaged sampling, not a better stencil.** Evaluating a step potential at the grid points puts each wall at the nearest mesh point, so the well's *width* is wrong by up to $dx$. Averaging $V$ over each cell makes the encoded width exact and lifts the finite well from $p=1.04$ to $p=2.07$, a factor of 52 in absolute error. Raising the order of the kinetic operator would not have helped at all.
+
+**3. Second order is then a hard ceiling, and I checked why rather than assuming.** At the wall $\psi''$ jumps, so $\psi$ is only $C^1$ and the stencil's Taylor expansion is invalid there. Choosing $N$ so the wall lands exactly on a cell boundary — which makes the step representation exact — does *not* reduce the error. It stays at $p=2.00$. So the survivor is the stencil crossing the kink, and no sampling scheme removes it.
+
+---
 
 This is an eigensolver for the time-independent Schrodinger equation in one dimension, built with finite differences. The idea is simple: I discretize space on a grid, build the Hamiltonian as a matrix (kinetic energy via a 5-point stencil for the second derivative, plus potential energy as a diagonal matrix), and diagonalize with `scipy.sparse.linalg.eigsh` to get the lowest eigenvalues (energies) and eigenvectors (wavefunctions). None of this is new in the sense that it's the standard finite-difference approach to solving Schrodinger, but I built and derived it myself from scratch, including the second-derivative stencil, so I'd actually understand what's happening at each step before leaning on scipy as a black box.
 

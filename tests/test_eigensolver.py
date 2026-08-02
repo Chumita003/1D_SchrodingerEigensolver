@@ -13,9 +13,23 @@ Run: pytest
 """
 
 import numpy as np
+import pytest
 from functools import partial
+from scipy.sparse import diags
 
-from Eigensolver_1Dimension import Schrodinger_solver, V_SingleWell
+from Eigensolver_1Dimension import (
+    Schrodinger_solver,
+    d2dx2_matrix,
+    V_SingleWell,
+    V_HarmonicOscillator,
+    V_AnharmonicOscillator,
+    V_InfiniteSquareWell,
+    V_FiniteSquareWell_CellAveraged,
+    V_LinearPotential,
+    V_SoftCoulomb,
+    V_DoubleWell,
+    V_DeltaDiscrete,
+)
 from validate_1d import (
     validate_infinite_square_well,
     validate_harmonic_oscillator,
@@ -110,3 +124,90 @@ def test_nth_eigenfunction_has_n_nodes():
         significant = psi[np.abs(psi) > 1e-3 * np.max(np.abs(psi))]
         nodes = int(np.sum(np.sign(significant)[1:] != np.sign(significant)[:-1]))
         assert nodes == n
+
+
+# ---------------------------------------------------------------------------
+# Structural checks: properties the solver must satisfy for *any* potential,
+# including the five that have no closed-form spectrum to compare against.
+# ---------------------------------------------------------------------------
+
+def _rebuild_H(V_fun, x_min, x_max, N, hbar=1.0, m=1.0):
+    '''
+    Reassemble the interior Hamiltonian the same way Schrodinger_solver does.
+
+    Note this is a *consistency* check, not an independent verification: if the
+    assembly itself were wrong, this helper would reproduce the same error and the
+    residual test below would still pass. Independent verification is what the
+    analytic comparisons above provide. What this catches is everything that happens
+    to the eigenpairs *after* eigsh returns them - the sorting, the zero padding at
+    the boundaries, the renormalization and the sign fix - none of which ARPACK saw.
+    '''
+    x = np.linspace(x_min, x_max, N)
+    dx = x[1] - x[0]
+    x_int = x[1:-1]
+    H = -(hbar ** 2 / (2 * m)) * d2dx2_matrix(x_int.size, dx)
+    return H + diags(np.asarray(V_fun(x_int), dtype=float), 0, format='csr'), dx
+
+
+# One entry per potential, including the ones with no analytic spectrum, which is
+# the whole point: these are the only quantitative checks those five ever get.
+_STRUCTURAL_CASES = [
+    ("harmonic", partial(V_HarmonicOscillator, omega=1.0, m=1.0), -8.0, 8.0, 600),
+    ("anharmonic", partial(V_AnharmonicOscillator, a=1.0, b=0.05), -8.0, 8.0, 600),
+    ("infinite well", V_InfiniteSquareWell, 0.0, 10.0, 600),
+    ("finite well", partial(V_FiniteSquareWell_CellAveraged, L=6.0, V0=30.0,
+                            well_centered=True), -8.0, 8.0, 600),
+    ("linear", partial(V_LinearPotential, F=1.0), -10.0, 10.0, 600),
+    ("soft Coulomb", partial(V_SoftCoulomb, Z=1.0, eps=0.5), -20.0, 20.0, 800),
+    ("quartic single well", partial(V_SingleWell, V0=2.0), -6.0, 6.0, 600),
+    ("quartic double well", partial(V_DoubleWell, a=1.5, V0=5.0), -6.0, 6.0, 600),
+    ("discrete delta", partial(V_DeltaDiscrete, alpha=5.0, x0=0.0), -20.0, 20.0, 800),
+]
+
+
+@pytest.mark.parametrize("name,V_fun,x_min,x_max,N", _STRUCTURAL_CASES)
+def test_hamiltonian_is_symmetric(name, V_fun, x_min, x_max, N):
+    # The regression guard for the entire boundary-closure story. The odd extension
+    # was chosen over the one-sided 4th-order rows precisely because it only touches
+    # the diagonal and therefore cannot break H = H^dagger. If a future change
+    # reintroduces asymmetric boundary rows, eigsh would silently start returning
+    # complex or unordered eigenvalues; this fires first.
+    H, _ = _rebuild_H(V_fun, x_min, x_max, N)
+    asymmetry = abs(H - H.T).max()
+    assert asymmetry == 0.0, f"{name}: H is not symmetric, max |H - H^T| = {asymmetry}"
+
+
+@pytest.mark.parametrize("name,V_fun,x_min,x_max,N", _STRUCTURAL_CASES)
+def test_eigenpairs_satisfy_the_eigenvalue_equation(name, V_fun, x_min, x_max, N):
+    # ||H psi - E psi|| / ||psi||, checked on the arrays the solver actually hands
+    # back rather than on eigsh's raw output. Catches a mismatch between eigvals and
+    # eigvecs after the argsort, and any damage done by the padding, renormalization
+    # or sign convention.
+    x, eigvals, eigvecs = Schrodinger_solver(
+        V_pot=V_fun, x_min=x_min, x_max=x_max, N=N, num_eigvals=5,
+    )
+    H, _ = _rebuild_H(V_fun, x_min, x_max, N)
+
+    for n in range(eigvals.size):
+        psi = eigvecs[1:-1, n]                      # strip the padded boundary zeros
+        residual = np.linalg.norm(H @ psi - eigvals[n] * psi) / np.linalg.norm(psi)
+        scale = max(abs(eigvals[n]), 1.0)           # relative to the eigenvalue scale
+        assert residual / scale < 1e-8, (
+            f"{name}, n={n}: residual {residual:.3e} is too large for E={eigvals[n]:.6f}"
+        )
+
+
+@pytest.mark.parametrize("name,V_fun,x_min,x_max,N", _STRUCTURAL_CASES)
+def test_eigenfunctions_are_orthonormal(name, V_fun, x_min, x_max, N):
+    # <psi_m|psi_n> = delta_mn under the same discrete inner product the solver uses
+    # to normalize, sum(psi_m psi_n) * dx. Orthogonality is not something the solver
+    # enforces by hand, it is inherited from H being symmetric, so this is really a
+    # second, independent way of detecting a broken Hamiltonian.
+    x, eigvals, eigvecs = Schrodinger_solver(
+        V_pot=V_fun, x_min=x_min, x_max=x_max, N=N, num_eigvals=5,
+    )
+    dx = x[1] - x[0]
+    gram = (eigvecs.T @ eigvecs) * dx
+    assert np.allclose(gram, np.eye(eigvals.size), atol=1e-8), (
+        f"{name}: max deviation from identity = {np.abs(gram - np.eye(eigvals.size)).max():.3e}"
+    )
