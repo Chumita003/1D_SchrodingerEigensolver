@@ -12,7 +12,7 @@ The interesting part is not the method, which is standard. It is that building i
 
 **1. Fourth-order convergence, once the boundary is handled correctly.** The 5-point stencil needs a point outside the domain at each Dirichlet wall. Treating it as zero is not a boundary condition, it is a dropped term, and it capped the whole solver at $O(dx)$. Closing the stencil with the odd extension $\psi_{-1}=-\psi_1$ — which follows from the Schrodinger equation itself, not from numerical analysis — restores the design order:
 
-$$1.5\times10^{-4} \;\longrightarrow\; 4\times10^{-11}, \qquad p = 1.00 \;\longrightarrow\; p = 4.01$$
+$$1.5\times10^{-4} \quad\longrightarrow\quad 4\times10^{-11}, \qquad p = 1.00 \quad\longrightarrow\quad p = 4.01$$
 
 ![Infinite square well convergence](figures/convergence_isw.png)
 
