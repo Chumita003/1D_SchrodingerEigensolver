@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**A finite-difference eigensolver for the 1D time-independent Schrodinger equation, built from scratch and validated against every analytic spectrum it can be compared to.** Space is discretized on a uniform grid, the kinetic operator is a 4th-order 5-point stencil, the potential is a diagonal matrix, and the resulting sparse Hamiltonian is diagonalized with shift-invert `eigsh`. Nine potentials, 36 regression tests, CI on Python 3.10 and 3.12.
+**A finite-difference eigensolver for the 1D time-independent Schrodinger equation, built from scratch and validated against every analytic spectrum it can be compared to.** Space is discretized on a uniform grid, the kinetic operator is a 4th-order 5-point stencil, the potential is a diagonal matrix, and the resulting sparse Hamiltonian is diagonalized with shift-invert `eigsh`. Nine potentials, 37 regression tests, CI on Python 3.10 and 3.12.
 
 The interesting part is not the method, which is standard. It is that building it carefully surfaced three *distinct* sources of error that look identical from the outside — all of them show up as a relative error around $10^{-3}$ to $10^{-4}$ that refuses to shrink — and separating them is what the project is actually about.
 

@@ -111,6 +111,23 @@ def test_eigenvalues_are_sorted_and_nondegenerate_ordering():
     assert np.all(np.diff(eigvals) > 0)
 
 
+def test_eigenfunction_sign_is_reproducible_across_runs():
+    # eigsh starts from a random vector unless v0 is pinned, so psi comes back with an
+    # arbitrary overall sign that changes from run to run. The solver fixes it by making
+    # the point of largest |psi| positive; this pins that convention down. No degeneracy
+    # caveat is needed in 1D - Sturm-Liouville forbids degenerate bound states.
+    V = partial(V_HarmonicOscillator, omega=1.0, m=1.0)
+    runs = []
+    for _ in range(4):
+        _, eigvals, eigvecs = Schrodinger_solver(
+            V_pot=V, x_min=-8.0, x_max=8.0, N=600, num_eigvals=5,
+        )
+        runs.append([np.sign(eigvecs[np.argmax(np.abs(eigvecs[:, n])), n])
+                     for n in range(eigvals.size)])
+    assert all(r == runs[0] for r in runs), f"sign flipped between runs: {runs}"
+    assert all(s > 0 for s in runs[0]), "convention is peak-positive"
+
+
 def test_nth_eigenfunction_has_n_nodes():
     # Sturm-Liouville oscillation theorem: the n-th excited state has exactly n nodes.
     # Checked here on a potential with no closed-form spectrum (quartic single well),
