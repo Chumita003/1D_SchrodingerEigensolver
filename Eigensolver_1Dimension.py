@@ -202,8 +202,18 @@ def Schrodinger_solver(
         # Fix the arbitrary overall sign eigsh returns (psi and -psi are equally valid).
         # Convention: the point of largest |psi| is positive. Purely cosmetic, makes
         # plots and repeated runs consistent, has no physical meaning.
-        peak = np.argmax(np.abs(normalized_eigvecs[:, i]))
-        if normalized_eigvecs[peak, i] < 0:
+        #
+        # The tie break matters. An antisymmetric state has two extrema of equal magnitude
+        # and opposite sign, so |psi| has two global maxima that differ only by rounding -
+        # measured separation ~7e-15 relative for n=1 of the harmonic oscillator. Plain
+        # argmax picks whichever happens to come out larger, which is not guaranteed to be
+        # the same one on the next run. Selecting the lowest index among all near-maximal
+        # points removes the ambiguity, because position is exact where the magnitudes are
+        # not. This has not been observed to flip in 1D, but it does in 2D on the same
+        # construction, so the rule here is written to be safe rather than lucky.
+        mag = np.abs(normalized_eigvecs[:, i])
+        near_max = np.flatnonzero(mag >= mag.max() * (1.0 - 1e-9))
+        if normalized_eigvecs[near_max[0], i] < 0:
             normalized_eigvecs[:, i] *= -1
 
     return x, eigvals, normalized_eigvecs
