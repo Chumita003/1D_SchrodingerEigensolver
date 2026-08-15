@@ -233,3 +233,47 @@ def test_eigenfunctions_are_orthonormal(name, V_fun, x_min, x_max, N):
     assert np.allclose(gram, np.eye(eigvals.size), atol=1e-8), (
         f"{name}: max deviation from identity = {np.abs(gram - np.eye(eigvals.size)).max():.3e}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The potential functions themselves, checked directly rather than through the
+# solver. Everything above tests V only via the spectrum it produces, which is
+# blind for the five potentials with no closed form: hermiticity, orthonormality
+# and the residual hold for *any* diagonal V, and node counts are topological, so
+# a quartic and a quadratic well give the same answer. Mutation confirmed the gap
+# - dropping the square in V_DoubleWell, or turning x**4 into x**2 in V_SingleWell,
+# left the entire suite green. These pin the algebra at hand-computed points.
+# ---------------------------------------------------------------------------
+
+_POTENTIAL_VALUES = [
+    # name, callable, x, expected V(x)   (all worked out by hand, see comments)
+    ("harmonic",       partial(V_HarmonicOscillator, omega=1.0, m=1.0), 2.0, 2.0),          # 0.5*1*4
+    ("anharmonic",     partial(V_AnharmonicOscillator, a=1.0, b=0.1),   2.0, 2.8),          # 0.5*(4 + 0.1*16)
+    ("infinite well",  V_InfiniteSquareWell,                            3.7, 0.0),          # flat inside
+    ("linear",         partial(V_LinearPotential, F=2.0),               3.0, 6.0),          # F*x
+    ("soft Coulomb",   partial(V_SoftCoulomb, Z=1.0, eps=0.5),          0.0, -2.0),         # -1/0.5
+    ("quartic single", partial(V_SingleWell, V0=2.0),                   2.0, 32.0),         # 2*2**4
+    ("quartic double", partial(V_DoubleWell, a=1.5, V0=7.0),            0.0, 35.4375),      # 7*(0-2.25)**2
+]
+
+
+@pytest.mark.parametrize("name,V_fun,x,expected", _POTENTIAL_VALUES)
+def test_potential_values_match_their_formulas(name, V_fun, x, expected):
+    got = float(np.asarray(V_fun(np.array([x])))[0])
+    assert abs(got - expected) < 1e-12, f"{name}: V({x}) = {got}, expected {expected}"
+
+
+def test_double_well_really_has_two_wells():
+    # Stronger than a point value and the reason the name is what it is: V must vanish at
+    # x = +-a and rise to a barrier in between. Dropping the outer square turns this into a
+    # shifted parabola with a single minimum at the origin, which this catches directly.
+    a, V0 = 1.5, 7.0
+    V = partial(V_DoubleWell, a=a, V0=V0)
+    x = np.linspace(-3.0, 3.0, 601)
+    v = V(x)
+    assert abs(float(V(np.array([a]))[0])) < 1e-12
+    assert abs(float(V(np.array([-a]))[0])) < 1e-12
+    assert float(V(np.array([0.0]))[0]) > 0.0, "no barrier between the wells"
+    minima = np.flatnonzero((v[1:-1] < v[:-2]) & (v[1:-1] < v[2:])) + 1
+    assert len(minima) == 2, f"expected two minima, found {len(minima)}"
+    assert np.allclose(np.abs(x[minima]), a, atol=2e-2)

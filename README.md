@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.12-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**A finite-difference eigensolver for the 1D time-independent Schrodinger equation, built from scratch and validated against every analytic spectrum it can be compared to.** Space is discretized on a uniform grid, the kinetic operator is a 4th-order 5-point stencil, the potential is a diagonal matrix, and the resulting sparse Hamiltonian is diagonalized with shift-invert `eigsh`. Nine potentials, 37 regression tests, CI on Python 3.10 and 3.12.
+**A finite-difference eigensolver for the 1D time-independent Schrodinger equation, built from scratch and validated against every analytic spectrum it can be compared to.** Space is discretized on a uniform grid, the kinetic operator is a 4th-order 5-point stencil, the potential is a diagonal matrix, and the resulting sparse Hamiltonian is diagonalized with shift-invert `eigsh`. Nine potentials, 45 regression tests, CI on Python 3.10 and 3.12.
 
 The interesting part is not the method, which is standard. It is that building it carefully surfaced three *distinct* sources of error that look identical from the outside — all of them show up as a relative error around $10^{-3}$ to $10^{-4}$ that refuses to shrink — and separating them is what the project is actually about.
 
@@ -110,7 +110,7 @@ The finite square well ($L=10$, $V_0=50$, centered) has a semi-analytic spectrum
 
 What it actually is: the sharp jump in $V(x)$ at the well walls, sampled pointwise onto the grid by `np.where`. Doing that puts the effective wall at whichever grid point happens to be nearest, so the well's width is only known to within $dx$ and the energies inherit an $O(dx)$ error. The fix is to give each grid point the *average* of $V$ over its cell instead of the value at its center,
 
-$$V_i = \frac{1}{dx}\int_{x_i - dx/2}^{x_i + dx/2} V(x')\,dx'$$
+$$V_i = \frac{1}{dx}\int_{x_i - dx/2}^{x_i + dx/2} V(x') dx'$$
 
 which for a step is exact and elementary: the only cell that changes is the one straddling a wall, and it gets $V_0$ times the fraction of itself lying outside the well. That single fractional number carries the sub-grid position of the wall, which is precisely what pointwise sampling throws away. It's implemented as `V_FiniteSquareWell_CellAveraged` and measured side by side against the pointwise version in `convergence_study_finite_well`, which switches to a narrower and shallower well ($L=4$, $V_0=40$) so the sweep stays cheap:
 
@@ -145,6 +145,10 @@ Taking that point with a plain `argmax` is fragile, and the test I first wrote c
 In 1D this never actually flipped across 60 runs, but it does in 2D on the identical construction, so the rule here is written to be safe rather than lucky: break the tie by position, taking the lowest index among all points within $10^{-9}$ of the maximum. Grid indices are exact integers, so where magnitudes are ambiguous in the last bit, position is not. The test now compares the returned arrays across runs instead of any single entry, and two independent executions of the notebook produce all five figures identical byte for byte.
 
 The lesson generalizes past this repo: never verify a convention by measuring the quantity the convention pins, and a passing mutation test shows an assertion depends on the code, not that it measures the right thing.
+
+So I ran that audit over the whole suite rather than assuming this was the only instance, and it wasn't. Every potential formula was unpinned. The structural checks — hermiticity, orthonormality, the residual — hold for *any* diagonal $V$, and the node-count check is topological, so a quartic well and a quadratic one are indistinguishable to it. Five of five formula mutations survived the entire suite, including deleting the outer square from `V_DoubleWell`, which turns two wells into one and is the identical error I had made in my handwritten notes. The fix is to test the potentials directly as functions against values worked out by hand, plus one check that the double well actually has two minima at $\pm a$ rather than one at the origin.
+
+Ten mutations, nine now caught. The survivor is replacing `argsort` on the eigenvalues with the identity, and that one is an equivalent mutant rather than a gap: `eigsh` already returns them in ascending order, verified over twenty runs. The sort stays as insurance, since ARPACK does not contractually guarantee it, and no test can distinguish insurance that is never needed.
 
 ## What's in the repo
 
