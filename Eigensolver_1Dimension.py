@@ -571,9 +571,9 @@ def plot_energy_levels(eigvals, n_states = None, ax = None, title = "Energy leve
 
 if __name__ == "__main__":
     x, eigvals, eigvecs = Schrodinger_solver(
-        V_pot = partial(V_LinearPotential, F = 1.0),
-        x_min = -10.0, x_max = 10.0,
-        N = 3000,
+        V_pot=partial(V_HarmonicOscillator, omega = 1.0, m = 1.0),
+        x_min = -8.0, x_max = 8.0,
+        N = 2000,
         num_eigvals = 10
     )
 
@@ -583,9 +583,9 @@ if __name__ == "__main__":
 
     # Quick visual check: eigenfunctions over V(x) + energy-level diagram.
     plot_wavefunctions(
-        x, eigvals, eigvecs, partial(V_LinearPotential, F=1.0),
+        x, eigvals, eigvecs, partial(V_HarmonicOscillator, omega=1.0, m=1.0),
         n_states=6, scale=1.0, x_range=(-5, 5), y_range=(-0.5, 6.5),
-        title="Linear Potential: eigenfunctions over V(x)",
+        title="Harmonic Oscillator: eigenfunctions over V(x)",
     )
-    plot_energy_levels(eigvals, n_states=6, title="Line: energy levels")
+    plot_energy_levels(eigvals, n_states=6, title="Harmonic Oscillator: energy levels")
     plt.show()
